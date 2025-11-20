@@ -1,0 +1,119 @@
+import 'dart:io';
+
+void main(List<String> args) {
+  if (args.isEmpty) {
+    print('❌ ERROR: Please provide a screen name.');
+    print('Usage: dart run tool/create_screen_smart.dart HomeScreen');
+    exit(1);
+  }
+
+  final screenName = args[0];
+  final folderName = _toSnakeCase(screenName);
+
+  final libSrc = Directory('lib/src');
+  if (!libSrc.existsSync()) {
+    print('❌ ERROR: lib/src/ not found. Run this from project root.');
+    exit(1);
+  }
+
+  // Create folders
+  final paths = [
+    'lib/src/views/pages/$folderName',
+    'lib/src/viewmodels',
+    'lib/src/providers',
+  ];
+
+  for (var path in paths) {
+    final dir = Directory(path);
+    if (!dir.existsSync()) {
+      dir.createSync(recursive: true);
+      print('📁 Created: $path');
+    }
+  }
+
+  // ----------- View -------------
+  final viewPath = 'lib/src/views/pages/$folderName/$folderName.dart';
+  final viewContent = '''
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../../viewmodels/${folderName}_viewmodel.dart';
+
+class $screenName extends StatelessWidget {
+  const $screenName({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<${screenName}ViewModel>();
+
+    return ChangeNotifierProvider(
+      create: (_) => ${screenName}ViewModel(),
+      child: Consumer<${screenName}ViewModel>(
+        builder: (context, vm, _) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('$screenName')),
+            body: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(vm.message),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: vm.loadData,
+                    child: const Text('Load Data'),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+''';
+  File(viewPath).writeAsStringSync(viewContent);
+  print('✍️ Created View: $viewPath');
+
+  // ----------- ViewModel ----------
+  final vmPath = 'lib/src/viewmodels/${folderName}_viewmodel.dart';
+  final vmContent = '''
+import 'package:flutter/material.dart';
+
+class ${screenName}ViewModel extends ChangeNotifier {
+  String message = 'Hello from $screenName';
+
+  void loadData() {
+    message = 'Data loaded in $screenName';
+    notifyListeners();
+  }
+}
+''';
+  File(vmPath).writeAsStringSync(vmContent);
+  print('✍️ Created ViewModel: $vmPath');
+
+  // ----------- Provider -----------
+  final providerPath = 'lib/src/providers/${folderName}_provider.dart';
+  final providerContent = '''
+import 'package:flutter/material.dart';
+
+class ${screenName}Provider with ChangeNotifier {
+  String text = 'Provider for $screenName';
+
+  void updateText(String value) {
+    text = value;
+    notifyListeners();
+  }
+}
+''';
+  File(providerPath).writeAsStringSync(providerContent);
+  print('✍️ Created Provider: $providerPath');
+
+  print('\n✅ "$screenName" screen generated successfully!');
+  print('💡 Tip: Add route or import manually in main.dart or app_routes.dart');
+}
+
+// Utility: PascalCase to snake_case
+String _toSnakeCase(String input) {
+  final regex = RegExp(r'(?<=[a-z])[A-Z]');
+  return input.replaceAllMapped(regex, (m) => '_${m.group(0)!.toLowerCase()}').toLowerCase();
+}
