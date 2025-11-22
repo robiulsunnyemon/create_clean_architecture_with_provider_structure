@@ -1,0 +1,341 @@
+import 'dart:io';
+
+void main(List<String> arguments) {
+  if (arguments.length < 3) {
+    print('❌ Please provide correct arguments. Usage:');
+    print('   dart run tool/create_individual_component.dart into [feature_name] for [component_name] [-s|-l]');
+    print('   dart run tool/create_individual_component.dart into home for cart -s');
+    print('   dart run tool/create_individual_component.dart into home for cart -l');
+    return;
+  }
+
+  final featureName = arguments[1]; // home
+  final componentName = arguments[3]; // cart
+  final isList = arguments.length > 4 && arguments[4] == '-l';
+
+  print('🚀 Creating component: $componentName in feature: $featureName');
+  print('📦 Response type: ${isList ? 'List' : 'Single'}');
+
+  _createComponentStructure(featureName, componentName, isList);
+  _createComponentFiles(featureName, componentName, isList);
+
+  print('\n✅ Component "$componentName" created successfully in "$featureName" feature!');
+  print('\n📝 Next steps:');
+  print('   1. Add the new provider to main.dart MultiProvider');
+  print('   2. Use the provider in your screens');
+  print('   3. Perform HOT RESTART');
+}
+
+void _createComponentStructure(String featureName, String componentName, bool isList) {
+  // Check if feature exists
+  if (!Directory('lib/features/$featureName').existsSync()) {
+    print('❌ Feature "$featureName" does not exist!');
+    print('💡 Please create the feature first using:');
+    print('   dart run tool/create_screen_smart.dart ${_capitalize(featureName)}Screen');
+    exit(1);
+  }
+
+  final directories = [
+    'lib/features/$featureName/data/datasources',
+    'lib/features/$featureName/data/models',
+    'lib/features/$featureName/data/repositories',
+    'lib/features/$featureName/domain/entities',
+    'lib/features/$featureName/domain/repositories',
+    'lib/features/$featureName/domain/usecases',
+    'lib/features/$featureName/presentation/providers',
+  ];
+
+  for (final dir in directories) {
+    try {
+      Directory(dir).createSync(recursive: true);
+    } catch (e) {
+      // Directory already exists - this is fine
+    }
+  }
+}
+
+void _createComponentFiles(String featureName, String componentName, bool isList) {
+  final className = _capitalize(componentName);
+  final snakeCaseName = _convertToSnakeCase(componentName);
+
+  // Data Layer - Model
+  _createFile('lib/features/$featureName/data/models/${snakeCaseName}_model.dart', '''
+class ${className}Model {
+  final String id;
+  final String title;
+  final double price;
+  final int quantity;
+  
+  const ${className}Model({
+    required this.id,
+    required this.title,
+    required this.price,
+    required this.quantity,
+  });
+
+  factory ${className}Model.fromJson(Map<String, dynamic> json) {
+    return ${className}Model(
+      id: json['id']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      price: (json['price'] as num?)?.toDouble() ?? 0.0,
+      quantity: (json['quantity'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'price': price,
+      'quantity': quantity,
+    };
+  }
+}
+''');
+
+  // Data Layer - Remote Data Source
+  final responseType = isList ? 'List<${className}Model>' : '${className}Model';
+
+  _createFile('lib/features/$featureName/data/datasources/${snakeCaseName}_remote_data_source.dart', '''
+import '../../../../core/errors/exceptions.dart';
+import '../models/${snakeCaseName}_model.dart';
+
+abstract class ${className}RemoteDataSource {
+  Future<$responseType> get${className}Data();
+}
+
+class ${className}RemoteDataSourceImpl implements ${className}RemoteDataSource {
+  @override
+  Future<$responseType> get${className}Data() async {
+    try {
+      // Implement your API call here
+      await Future.delayed(const Duration(milliseconds: 500));
+      
+      // Example API response
+      ${isList ? 'return [${className}Model(id: "1", title: "$componentName Item 1", price: 29.99, quantity: 2)];' : 'return ${className}Model(id: "1", title: "$componentName Item", price: 29.99, quantity: 1);'}
+    } catch (e) {
+      throw ServerException('Failed to fetch $componentName data');
+    }
+  }
+}
+''');
+
+  // Data Layer - Repository Implementation
+  final entityResponseType = isList ? 'List<${className}Entity>' : '${className}Entity';
+  final repositoryMethodBody = isList ? '''
+    if (await networkInfo.isConnected) {
+      try {
+        final models = await remoteDataSource.get${className}Data();
+        final entities = models.map((model) => ${className}Entity(
+          id: model.id,
+          title: model.title,
+          price: model.price,
+          quantity: model.quantity,
+        )).toList();
+        return Right(entities);
+      } on ServerException catch (e) {
+        return Left(ServerFailure(e.message));
+      }
+    } else {
+      return Left(NetworkFailure('No internet connection'));
+    }
+  ''' : '''
+    if (await networkInfo.isConnected) {
+      try {
+        final model = await remoteDataSource.get${className}Data();
+        final entity = ${className}Entity(
+          id: model.id,
+          title: model.title,
+          price: model.price,
+          quantity: model.quantity,
+        );
+        return Right(entity);
+      } on ServerException catch (e) {
+        return Left(ServerFailure(e.message));
+      }
+    } else {
+      return Left(NetworkFailure('No internet connection'));
+    }
+  ''';
+
+  _createFile('lib/features/$featureName/data/repositories/${snakeCaseName}_repository_impl.dart', '''
+import 'package:dartz/dartz.dart';
+import '../../../../core/errors/exceptions.dart';
+import '../../../../core/errors/failures.dart';
+import '../../../../core/network/network_info.dart';
+import '../../domain/entities/${snakeCaseName}_entity.dart';
+import '../../domain/repositories/${snakeCaseName}_repository.dart';
+import '../datasources/${snakeCaseName}_remote_data_source.dart';
+
+class ${className}RepositoryImpl implements ${className}Repository {
+  final ${className}RemoteDataSource remoteDataSource;
+  final NetworkInfo networkInfo;
+
+  ${className}RepositoryImpl({
+    required this.remoteDataSource,
+    required this.networkInfo,
+  });
+
+  @override
+  Future<Either<Failure, $entityResponseType>> get${className}Data() async {
+    $repositoryMethodBody
+  }
+}
+''');
+
+  // Domain Layer - Entity
+  _createFile('lib/features/$featureName/domain/entities/${snakeCaseName}_entity.dart', '''
+class ${className}Entity {
+  final String id;
+  final String title;
+  final double price;
+  final int quantity;
+  
+  const ${className}Entity({
+    required this.id,
+    required this.title,
+    required this.price,
+    required this.quantity,
+  });
+}
+''');
+
+  // Domain Layer - Repository Interface
+  _createFile('lib/features/$featureName/domain/repositories/${snakeCaseName}_repository.dart', '''
+import 'package:dartz/dartz.dart';
+import '../../../../core/errors/failures.dart';
+import '../entities/${snakeCaseName}_entity.dart';
+
+abstract class ${className}Repository {
+  Future<Either<Failure, ${isList ? 'List<${className}Entity>' : '${className}Entity'}>> get${className}Data();
+}
+''');
+
+  // Domain Layer - Use Cases
+  _createFile('lib/features/$featureName/domain/usecases/get_${snakeCaseName}_usecase.dart', '''
+import 'package:dartz/dartz.dart';
+import '../../../../core/errors/failures.dart';
+import '../repositories/${snakeCaseName}_repository.dart';
+import '../entities/${snakeCaseName}_entity.dart';
+
+class Get${className}UseCase {
+  final ${className}Repository repository;
+
+  Get${className}UseCase(this.repository);
+
+  Future<Either<Failure, ${isList ? 'List<${className}Entity>' : '${className}Entity'}>> call() {
+    return repository.get${className}Data();
+  }
+}
+''');
+
+  // Presentation Layer - Provider
+  final stateType = isList ? 'List<${className}Entity>' : '${className}Entity';
+  final stateClass = isList ? '${className}List' : className;
+  final stateLoaded = isList ? '${className}ListLoaded' : '${className}Loaded';
+
+  _createFile('lib/features/$featureName/presentation/providers/${snakeCaseName}_provider.dart', '''
+import 'package:flutter/material.dart';
+import 'package:dartz/dartz.dart';
+import '../../domain/usecases/get_${snakeCaseName}_usecase.dart';
+import '../../domain/entities/${snakeCaseName}_entity.dart';
+
+// State Classes
+@immutable
+abstract class ${className}State {
+  const ${className}State();
+}
+
+class ${className}Initial extends ${className}State {}
+
+class ${className}Loading extends ${className}State {}
+
+class ${stateLoaded} extends ${className}State {
+  final $stateType data;
+  const ${stateLoaded}(this.data);
+}
+
+class ${className}Error extends ${className}State {
+  final String message;
+  const ${className}Error(this.message);
+}
+
+// Provider
+class ${className}Provider with ChangeNotifier {
+  final Get${className}UseCase get${className}UseCase;
+  ${className}State _state = ${className}Initial();
+
+  ${className}Provider({required this.get${className}UseCase});
+
+  ${className}State get state => _state;
+
+  Future<void> get${className}Data() async {
+    _state = ${className}Loading();
+    notifyListeners();
+
+    final result = await get${className}UseCase();
+
+    result.fold(
+      (failure) {
+        _state = ${className}Error(failure.toString());
+      },
+      (${isList ? 'entities' : 'entity'}) {
+        _state = ${stateLoaded}(${isList ? 'entities' : 'entity'});
+      },
+    );
+
+    notifyListeners();
+  }
+
+  // Add more methods for $componentName operations
+  void addTo${className}(${className}Entity item) {
+    // Implement add logic here
+    notifyListeners();
+  }
+
+  void removeFrom${className}(String itemId) {
+    // Implement remove logic here
+    notifyListeners();
+  }
+
+  void update${className}Quantity(String itemId, int newQuantity) {
+    // Implement update logic here
+    notifyListeners();
+  }
+}
+''');
+
+  print('\n📋 Created all files for $componentName component in $featureName feature');
+}
+
+String _convertToSnakeCase(String text) {
+  return text.replaceAllMapped(
+    RegExp(r'[A-Z]'),
+        (match) => match.start == 0 ? match.group(0)!.toLowerCase() : '_${match.group(0)!.toLowerCase()}',
+  );
+}
+
+String _capitalize(String text) {
+  if (text.isEmpty) return text;
+  return '${text[0].toUpperCase()}${text.substring(1)}';
+}
+
+void _createFile(String path, String content) {
+  try {
+    final file = File(path);
+    final directory = file.parent;
+    if (!directory.existsSync()) {
+      directory.createSync(recursive: true);
+    }
+
+    if (file.existsSync()) {
+      print('⚠️  File already exists: $path');
+      return;
+    }
+
+    file.writeAsStringSync(content);
+    print('📄 Created: $path');
+  } catch (e) {
+    print('❌ Failed to create file: $path - $e');
+  }
+}
