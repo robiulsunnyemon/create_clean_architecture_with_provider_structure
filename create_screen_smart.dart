@@ -1,3 +1,5 @@
+//create_screen_smart.dart
+
 import 'dart:io';
 
 void main(List<String> arguments) {
@@ -5,18 +7,21 @@ void main(List<String> arguments) {
     print('❌ Please provide a screen name. Usage:');
     print('   dart run tool/create_screen_smart.dart ScreenName');
     print('   dart run tool/create_screen_smart.dart HomeScreen');
+    print('   dart run tool/create_screen_smart.dart HomeScreen -l');
     return;
   }
 
   final screenName = arguments.first;
+  final isList = arguments.length > 1 && arguments[1] == '-l';
   final featureName = _convertToFeatureName(screenName);
 
-  print('🚀 Creating feature: $featureName for screen: $screenName\n');
+  print('🚀 Creating feature: $featureName for screen: $screenName');
+  print('📦 Response type: ${isList ? 'List' : 'Single'}');
 
   _createFeatureStructure(featureName, screenName);
-  _createFeatureFiles(featureName, screenName);
+  _createFeatureFiles(featureName, screenName, isList);
   _updateAppRouter(featureName, screenName);
-  _updateMainDart(featureName, screenName);
+  _updateMainDart(featureName, screenName, isList);
 
   print('\n✅ Feature "$featureName" created successfully!');
   print('\n📝 Next steps:');
@@ -55,63 +60,208 @@ void _createFeatureStructure(String featureName, String screenName) {
   }
 }
 
-void _createFeatureFiles(String featureName, String screenName) {
+void _createFeatureFiles(String featureName, String screenName, bool isList) {
   final className = screenName.replaceAll('Screen', '');
   final snakeCaseName = _convertToSnakeCase(featureName);
 
-  // Data Layer
-  _createFile('lib/features/$featureName/data/models/${snakeCaseName}_model.dart', '''
-class ${className}Model {
-  final String id;
+  // Domain Layer - Entity (প্রথমে Entity তৈরি হবে)
+  _createFile(
+    'lib/features/$featureName/domain/entities/${snakeCaseName}_entity.dart',
+    '''
+class ${className}Entity {
+  final int userId;
+  final int id;
   final String title;
-  
-  const ${className}Model({
+  final String body;
+
+  const ${className}Entity({
+    required this.userId,
     required this.id,
     required this.title,
+    required this.body,
   });
 
-  factory ${className}Model.fromJson(Map<String, dynamic> json) {
-    return ${className}Model(
-      id: json['id']?.toString() ?? '',
-      title: json['title']?.toString() ?? '',
+  // Copy with method for easy updates
+  ${className}Entity copyWith({
+    int? userId,
+    int? id,
+    String? title,
+    String? body,
+  }) {
+    return ${className}Entity(
+      userId: userId ?? this.userId,
+      id: id ?? this.id,
+      title: title ?? this.title,
+      body: body ?? this.body,
     );
   }
 
-  Map<String, dynamic> toJson() {
-    return {
-      'id': id,
-      'title': title,
-    };
+  @override
+  String toString() {
+    return '${className}Entity(userId: \$userId, id: \$id, title: \$title, body: \$body)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+  
+    return other is ${className}Entity &&
+      other.userId == userId &&
+      other.id == id &&
+      other.title == title &&
+      other.body == body;
+  }
+
+  @override
+  int get hashCode {
+    return userId.hashCode ^
+      id.hashCode ^
+      title.hashCode ^
+      body.hashCode;
   }
 }
-''');
+''',
+  );
 
-  _createFile('lib/features/$featureName/data/datasources/${snakeCaseName}_remote_data_source.dart', '''
+  // Data Layer - Model (Entity কে extends করে)
+  _createFile(
+    'lib/features/$featureName/data/models/${snakeCaseName}_model.dart',
+    '''
+import '../../domain/entities/${snakeCaseName}_entity.dart';
+
+class ${className}Model extends ${className}Entity {
+  ${className}Model({
+    required super.userId,
+    required super.id,
+    required super.title,
+    required super.body,
+  });
+
+  // JSON → Dart object
+  factory ${className}Model.fromJson(Map<String, dynamic> json) {
+    return ${className}Model(
+      userId: json['userId'] as int? ?? 0,
+      id: json['id'] as int? ?? 0,
+      title: json['title']?.toString() ?? '',
+      body: json['body']?.toString() ?? '',
+    );
+  }
+
+  // Model → JSON
+  Map<String, dynamic> toJson() {
+    return {
+      'userId': userId,
+      'id': id,
+      'title': title,
+      'body': body,
+    };
+  }
+
+  // Entity → Model
+  factory ${className}Model.fromEntity(${className}Entity entity) {
+    return ${className}Model(
+      userId: entity.userId,
+      id: entity.id,
+      title: entity.title,
+      body: entity.body,
+    );
+  }
+
+  // Model → Entity (automatically available due to inheritance)
+  ${className}Entity toEntity() {
+    return ${className}Entity(
+      userId: userId,
+      id: id,
+      title: title,
+      body: body,
+    );
+  }
+
+  // Copy with method
+  @override
+  ${className}Model copyWith({
+    int? userId,
+    int? id,
+    String? title,
+    String? body,
+  }) {
+    return ${className}Model(
+      userId: userId ?? this.userId,
+      id: id ?? this.id,
+      title: title ?? this.title,
+      body: body ?? this.body,
+    );
+  }
+}
+''',
+  );
+
+  // Data Layer - Remote Data Source
+  final responseType = isList ? 'List<${className}Model>' : '${className}Model';
+  final apiResponse = isList
+      ? '[${className}Model(userId: 1, id: 1, title: "$className Title 1", body: "This is the body of $className 1"), ${className}Model(userId: 1, id: 2, title: "$className Title 2", body: "This is the body of $className 2")]'
+      : '${className}Model(userId: 1, id: 1, title: "$className Title", body: "This is the body of $className")';
+
+  _createFile(
+    'lib/features/$featureName/data/datasources/${snakeCaseName}_remote_data_source.dart',
+    '''
 import '../../../../core/errors/exceptions.dart';
 import '../models/${snakeCaseName}_model.dart';
 
 abstract class ${className}RemoteDataSource {
-  Future<${className}Model> get${className}Data();
+  Future<$responseType> get${className}Data();
 }
 
 class ${className}RemoteDataSourceImpl implements ${className}RemoteDataSource {
   @override
-  Future<${className}Model> get${className}Data() async {
+  Future<$responseType> get${className}Data() async {
     try {
       // Implement your API call here
       await Future.delayed(const Duration(milliseconds: 500));
-      return ${className}Model(
-        id: '1',
-        title: '$className Data',
-      );
+      return $apiResponse;
     } catch (e) {
       throw ServerException('Failed to fetch $featureName data');
     }
   }
 }
-''');
+''',
+  );
 
-  _createFile('lib/features/$featureName/data/repositories/${snakeCaseName}_repository_impl.dart', '''
+  // Data Layer - Repository Implementation
+  final entityResponseType = isList
+      ? 'List<${className}Entity>'
+      : '${className}Entity';
+  final repositoryMethodBody = isList
+      ? '''
+    if (await networkInfo.isConnected) {
+      try {
+        final models = await remoteDataSource.get${className}Data();
+        // Models automatically are Entities (due to inheritance)
+        return Right(models);
+      } on ServerException catch (e) {
+        return Left(ServerFailure(e.message));
+      }
+    } else {
+      return Left(NetworkFailure('No internet connection'));
+    }
+  '''
+      : '''
+    if (await networkInfo.isConnected) {
+      try {
+        final model = await remoteDataSource.get${className}Data();
+        // Model automatically is Entity (due to inheritance)
+        return Right(model);
+      } on ServerException catch (e) {
+        return Left(ServerFailure(e.message));
+      }
+    } else {
+      return Left(NetworkFailure('No internet connection'));
+    }
+  ''';
+
+  _createFile(
+    'lib/features/$featureName/data/repositories/${snakeCaseName}_repository_impl.dart',
+    '''
 import 'package:dartz/dartz.dart';
 import '../../../../core/errors/exceptions.dart';
 import '../../../../core/errors/failures.dart';
@@ -130,49 +280,31 @@ class ${className}RepositoryImpl implements ${className}Repository {
   });
 
   @override
-  Future<Either<Failure, ${className}Entity>> get${className}Data() async {
-    if (await networkInfo.isConnected) {
-      try {
-        final model = await remoteDataSource.get${className}Data();
-        final entity = ${className}Entity(
-          id: model.id,
-          title: model.title,
-        );
-        return Right(entity);
-      } on ServerException catch (e) {
-        return Left(ServerFailure(e.message));
-      }
-    } else {
-      return Left(NetworkFailure('No internet connection'));
-    }
+  Future<Either<Failure, $entityResponseType>> get${className}Data() async {
+    $repositoryMethodBody
   }
 }
-''');
+''',
+  );
 
-  // Domain Layer
-  _createFile('lib/features/$featureName/domain/entities/${snakeCaseName}_entity.dart', '''
-class ${className}Entity {
-  final String id;
-  final String title;
-  
-  const ${className}Entity({
-    required this.id,
-    required this.title,
-  });
-}
-''');
-
-  _createFile('lib/features/$featureName/domain/repositories/${snakeCaseName}_repository.dart', '''
+  // Domain Layer - Repository Interface
+  _createFile(
+    'lib/features/$featureName/domain/repositories/${snakeCaseName}_repository.dart',
+    '''
 import 'package:dartz/dartz.dart';
 import '../../../../core/errors/failures.dart';
 import '../entities/${snakeCaseName}_entity.dart';
 
 abstract class ${className}Repository {
-  Future<Either<Failure, ${className}Entity>> get${className}Data();
+  Future<Either<Failure, ${isList ? 'List<${className}Entity>' : '${className}Entity'}>> get${className}Data();
 }
-''');
+''',
+  );
 
-  _createFile('lib/features/$featureName/domain/usecases/get_${snakeCaseName}_usecase.dart', '''
+  // Domain Layer - Use Cases
+  _createFile(
+    'lib/features/$featureName/domain/usecases/get_${snakeCaseName}_usecase.dart',
+    '''
 import 'package:dartz/dartz.dart';
 import '../../../../core/errors/failures.dart';
 import '../repositories/${snakeCaseName}_repository.dart';
@@ -183,15 +315,22 @@ class Get${className}UseCase {
 
   Get${className}UseCase(this.repository);
 
-  Future<Either<Failure, ${className}Entity>> call() {
+  Future<Either<Failure, ${isList ? 'List<${className}Entity>' : '${className}Entity'}>> call() {
     return repository.get${className}Data();
   }
 }
-''');
+''',
+  );
 
-  // Presentation Layer
-  _createFile('lib/features/$featureName/presentation/state/${snakeCaseName}_state.dart', '''
+  // Presentation Layer - State
+  final stateType = isList ? 'List<${className}Entity>' : '${className}Entity';
+  final stateLoaded = isList ? '${className}ListLoaded' : '${className}Loaded';
+
+  _createFile(
+    'lib/features/$featureName/presentation/state/${snakeCaseName}_state.dart',
+    '''
 import 'package:flutter/material.dart';
+import '../../domain/entities/${snakeCaseName}_entity.dart';
 
 @immutable
 abstract class ${className}State {
@@ -202,10 +341,10 @@ class ${className}Initial extends ${className}State {}
 
 class ${className}Loading extends ${className}State {}
 
-class ${className}Loaded extends ${className}State {
-  final ${className}Entity data;
+class ${stateLoaded} extends ${className}State {
+  final $stateType data;
 
-  const ${className}Loaded(this.data);
+  const ${stateLoaded}(this.data);
 }
 
 class ${className}Error extends ${className}State {
@@ -213,9 +352,13 @@ class ${className}Error extends ${className}State {
 
   const ${className}Error(this.message);
 }
-''');
+''',
+  );
 
-  _createFile('lib/features/$featureName/presentation/providers/${snakeCaseName}_provider.dart', '''
+  // Presentation Layer - Provider
+  _createFile(
+    'lib/features/$featureName/presentation/providers/${snakeCaseName}_provider.dart',
+    '''
 import 'package:flutter/material.dart';
 import 'package:dartz/dartz.dart';
 import '../../domain/usecases/get_${snakeCaseName}_usecase.dart';
@@ -225,10 +368,12 @@ import '../state/${snakeCaseName}_state.dart';
 class ${className}Provider with ChangeNotifier {
   final Get${className}UseCase get${className}UseCase;
   ${className}State _state = ${className}Initial();
+  ${isList ? 'List<${className}Entity> _items = [];' : '${className}Entity? _item;'}
 
   ${className}Provider({required this.get${className}UseCase});
 
   ${className}State get state => _state;
+  ${isList ? 'List<${className}Entity> get items => _items;' : '${className}Entity? get item => _item;'}
 
   Future<void> get${className}Data() async {
     _state = ${className}Loading();
@@ -240,21 +385,61 @@ class ${className}Provider with ChangeNotifier {
       (failure) {
         _state = ${className}Error(failure.toString());
       },
-      (entity) {
-        _state = ${className}Loaded(entity);
+      (${isList ? 'entities' : 'entity'}) {
+        ${isList ? '_items = entities;' : '_item = entity;'}
+        _state = ${stateLoaded}(${isList ? 'entities' : 'entity'});
       },
     );
 
     notifyListeners();
   }
-}
-''');
 
-  _createFile('lib/features/$featureName/presentation/pages/${snakeCaseName}_page.dart', '''
+  ${isList ? '''
+  // Additional methods for list operations
+  void addItem(${className}Entity item) {
+    _items.add(item);
+    _state = ${className}ListLoaded(_items);
+    notifyListeners();
+  }
+
+  void removeItem(int itemId) {
+    _items.removeWhere((item) => item.id == itemId);
+    _state = ${className}ListLoaded(_items);
+    notifyListeners();
+  }
+
+  void clearItems() {
+    _items.clear();
+    _state = ${className}ListLoaded(_items);
+    notifyListeners();
+  }
+  ''' : '''
+  // Additional methods for single item operations
+  void updateItem(${className}Entity updatedItem) {
+    _item = updatedItem;
+    _state = ${className}Loaded(updatedItem);
+    notifyListeners();
+  }
+
+  void clearItem() {
+    _item = null;
+    _state = ${className}Initial();
+    notifyListeners();
+  }
+  '''}
+}
+''',
+  );
+
+  // Presentation Layer - Page
+  _createFile(
+    'lib/features/$featureName/presentation/pages/${snakeCaseName}_page.dart',
+    '''
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/${snakeCaseName}_provider.dart';
 import '../state/${snakeCaseName}_state.dart';
+import '../../domain/entities/${snakeCaseName}_entity.dart';
 
 class ${screenName} extends StatefulWidget {
   const ${screenName}({super.key});
@@ -295,8 +480,8 @@ class _${screenName}State extends State<${screenName}> {
                 ],
               ),
             );
-          } else if (state is ${className}Loaded) {
-            return _buildContent(state.data);
+          } else if (state is ${stateLoaded}) {
+            return _buildContent(state.data${isList ? ', provider' : ''});
           } else if (state is ${className}Error) {
             return Center(
               child: Column(
@@ -325,70 +510,118 @@ class _${screenName}State extends State<${screenName}> {
     );
   }
 
-  Widget _buildContent(${className}Entity data) {
-    return Padding(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Card(
-            elevation: 4,
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    data.title,
-                    style: const TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
+Widget _buildContent(${isList ? 'List<${className}Entity> data, ${className}Provider provider' : '${className}Entity data'}) {
+  return Padding(
+    padding: const EdgeInsets.all(16.0),
+    child: ${isList ? '''
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Total Items: \${data.length}',
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: ListView.builder(
+            itemCount: data.length,
+            itemBuilder: (context, index) {
+              final item = data[index];
+              return Card(
+                margin: const EdgeInsets.only(bottom: 8),
+                child: ListTile(
+                  title: Text(item.title),
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('ID: \${item.id}'),
+                      Text('User ID: \${item.userId}'),
+                      Text('Body: \${item.body.length <= 50 ? item.body : '\${item.body.substring(0, 50)}...'}'),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text('ID: \${data.id}'),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: ListView(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.info),
-                  title: const Text('Feature Information'),
-                  subtitle: const Text('This screen was automatically generated'),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete, color: Colors.red),
+                    onPressed: () => provider.removeItem(item.id),
+                  ),
                 ),
-                ListTile(
-                  leading: const Icon(Icons.code),
-                  title: const Text('Clean Architecture'),
-                  subtitle: const Text('Follows Provider + Clean Architecture pattern'),
+              );
+            },
+          ),
+        ),
+      ],
+    )
+    ''' : '''
+    Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Card(
+          elevation: 4,
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  data.title,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text('ID: \${data.id}'),
+                Text('User ID: \${data.userId}'),
+                const SizedBox(height: 8),
+                Text(
+                  data.body,
+                  style: const TextStyle(fontSize: 16),
                 ),
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: ListView(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.info),
+                title: const Text('Feature Information'),
+                subtitle: const Text('This screen was automatically generated'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.code),
+                title: const Text('Clean Architecture'),
+                subtitle: const Text('Follows Provider + Clean Architecture pattern'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    )
+    '''}
+  );
 }
-''');
+}
+''',
+  );
 
   // Dependency Injection
-  _createFile('lib/features/$featureName/domain/providers/${snakeCaseName}_providers.dart', '''
+  _createFile(
+    'lib/features/$featureName/domain/providers/${snakeCaseName}_providers.dart',
+    '''
 import 'package:provider/single_child_widget.dart';
 
 List<SingleChildWidget> ${featureName}Providers = [
   // These providers are automatically added to main.dart
 ];
-''');
+''',
+  );
 
   print('\n📋 Created all files for $featureName feature');
 }
 
 void _updateAppRouter(String featureName, String screenName) {
-
   final routePath = '/$featureName';
   final routeName = featureName;
 
@@ -426,13 +659,17 @@ class AppRouter {
     return;
   }
 
-  final importStatement = "import '../../features/$featureName/presentation/pages/${_convertToSnakeCase(featureName)}_page.dart';";
+  final importStatement =
+      "import '../../features/$featureName/presentation/pages/${_convertToSnakeCase(featureName)}_page.dart';";
 
   if (!content.contains(importStatement)) {
     final importSectionEnd = content.lastIndexOf("import '");
     if (importSectionEnd != -1) {
       final nextLine = content.indexOf('\n', importSectionEnd);
-      content = content.substring(0, nextLine + 1) + '$importStatement\n' + content.substring(nextLine + 1);
+      content =
+          content.substring(0, nextLine + 1) +
+          '$importStatement\n' +
+          content.substring(nextLine + 1);
     } else {
       content = '$importStatement\n$content';
     }
@@ -441,14 +678,18 @@ class AppRouter {
   final routesStart = content.indexOf('routes: [');
   if (routesStart != -1) {
     final routesContentStart = content.indexOf('[', routesStart) + 1;
-    final routeCode = '''
+    final routeCode =
+        '''
       GoRoute(
         path: '$routePath',
         name: '$routeName',
         builder: (context, state) => const $screenName(),
       ),''';
 
-    content = content.substring(0, routesContentStart) + '\n$routeCode' + content.substring(routesContentStart);
+    content =
+        content.substring(0, routesContentStart) +
+        '\n$routeCode' +
+        content.substring(routesContentStart);
   }
 
   routerFile.writeAsStringSync(content);
@@ -474,8 +715,12 @@ class RouteConstants {
   if (!content.contains('static const String $constantName =')) {
     final lastBrace = content.lastIndexOf('}');
     if (lastBrace != -1) {
-      final newConstant = '  static const String $constantName = \'$routePath\';\n';
-      content = content.substring(0, lastBrace) + newConstant + content.substring(lastBrace);
+      final newConstant =
+          '  static const String $constantName = \'$routePath\';\n';
+      content =
+          content.substring(0, lastBrace) +
+          newConstant +
+          content.substring(lastBrace);
       constantsFile.writeAsStringSync(content);
       print('✅ Added route constant: $constantName = $routePath');
     }
@@ -483,7 +728,7 @@ class RouteConstants {
 }
 
 // নতুন ফাংশন: main.dart এ প্রোভাইডার অটোমেটিকally এড করা
-void _updateMainDart(String featureName, String screenName) {
+void _updateMainDart(String featureName, String screenName, bool isList) {
   final className = screenName.replaceAll('Screen', '');
   final mainFile = File('lib/main.dart');
 
@@ -516,10 +761,16 @@ void _updateMainDart(String featureName, String screenName) {
       final lastImport = content.lastIndexOf("import '");
       if (lastImport != -1) {
         final nextLine = content.indexOf('\n', lastImport);
-        content = content.substring(0, nextLine + 1) + '$import\n' + content.substring(nextLine + 1);
+        content =
+            content.substring(0, nextLine + 1) +
+            '$import\n' +
+            content.substring(nextLine + 1);
       } else {
         final firstLineEnd = content.indexOf('\n') + 1;
-        content = content.substring(0, firstLineEnd) + '$import\n' + content.substring(firstLineEnd);
+        content =
+            content.substring(0, firstLineEnd) +
+            '$import\n' +
+            content.substring(firstLineEnd);
       }
     }
   }
@@ -531,7 +782,7 @@ void _updateMainDart(String featureName, String screenName) {
   if (match == null) {
     print('⚠️  Could not find MultiProvider in main.dart');
     print('💡 Creating new MultiProvider setup...');
-    _createMultiProviderSetup(featureName, screenName, content);
+    _createMultiProviderSetup(featureName, screenName, content, isList);
     return;
   }
 
@@ -539,7 +790,9 @@ void _updateMainDart(String featureName, String screenName) {
 
   // Find providers list
   final providersPattern = RegExp(r'providers:\s*\[');
-  final providersMatch = providersPattern.firstMatch(content.substring(multiProviderStart));
+  final providersMatch = providersPattern.firstMatch(
+    content.substring(multiProviderStart),
+  );
 
   if (providersMatch == null) {
     print('⚠️  Could not find providers list in main.dart');
@@ -549,7 +802,8 @@ void _updateMainDart(String featureName, String screenName) {
   final providersStart = multiProviderStart + providersMatch.start;
   final providersContentStart = content.indexOf('[', providersStart) + 1;
 
-  final newProviders = '''
+  final newProviders =
+      '''
 
         // $screenName Feature Providers
         Provider<${className}RemoteDataSource>(
@@ -572,14 +826,22 @@ void _updateMainDart(String featureName, String screenName) {
           ),
         ),''';
 
-  content = content.substring(0, providersContentStart) + newProviders + content.substring(providersContentStart);
+  content =
+      content.substring(0, providersContentStart) +
+      newProviders +
+      content.substring(providersContentStart);
 
   mainFile.writeAsStringSync(content);
   print('✅ Added $className providers to main.dart');
 }
 
 // নতুন ফাংশন: MultiProvider setup তৈরি করা যদি না থাকে
-void _createMultiProviderSetup(String featureName, String screenName, String originalContent) {
+void _createMultiProviderSetup(
+  String featureName,
+  String screenName,
+  String originalContent,
+  bool isList,
+) {
   final className = screenName.replaceAll('Screen', '');
 
   // Check if runApp exists
@@ -591,9 +853,9 @@ void _createMultiProviderSetup(String featureName, String screenName, String ori
     return;
   }
 
-
   // Create new content with MultiProvider
-  final newContent = '''
+  final newContent =
+      '''
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -641,7 +903,7 @@ void main() {
           ),
         ),
       ],
-      child: const App(),
+      child: const MyApp(),
     ),
   );
 }
@@ -691,7 +953,9 @@ class MyApp extends StatelessWidget {
 String _convertToSnakeCase(String text) {
   return text.replaceAllMapped(
     RegExp(r'[A-Z]'),
-        (match) => match.start == 0 ? match.group(0)!.toLowerCase() : '_${match.group(0)!.toLowerCase()}',
+    (match) => match.start == 0
+        ? match.group(0)!.toLowerCase()
+        : '_${match.group(0)!.toLowerCase()}',
   );
 }
 
