@@ -1,3 +1,8 @@
+// create_structure.dart file
+
+
+
+
 import 'dart:io';
 
 void main() {
@@ -244,6 +249,7 @@ class MyApp extends StatelessWidget {
 
   _createFile('lib/app/routes/app_router.dart', '''
 import 'package:go_router/go_router.dart';
+import 'package:flutter/material.dart';
 
 class AppRouter {
   static final GoRouter router = GoRouter(
@@ -251,7 +257,11 @@ class AppRouter {
       // Add your routes here
       GoRoute(
         path: '/',
-        builder: (context, state) => const Placeholder(), // Replace with your home screen
+        builder: (context, state) => const Scaffold(
+          body: Center(
+            child: Text('Welcome to My Flutter App'),
+          ),
+        ), // Replace with your home screen
       ),
     ],
   );
@@ -273,20 +283,6 @@ class AppProvider with ChangeNotifier {
 }
 ''');
 
-  // Create a sample feature structure
-  _createFile('lib/features/README.md', '''
-# Features Directory
-
-This directory contains all the features of your application.
-
-Each feature should follow this structure:
-- data/ (Data layer)
-- domain/ (Domain layer) 
-- presentation/ (Presentation layer)
-
-To create a new feature, run:
-dart run tool/create_screen_smart.dart FeatureName
-''');
 }
 
 void _createFile(String path, String content) {
