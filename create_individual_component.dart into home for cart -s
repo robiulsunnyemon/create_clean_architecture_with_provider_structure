@@ -1,3 +1,5 @@
+//create_individual_component.dart
+
 import 'dart:io';
 
 void main(List<String> arguments) {
@@ -58,21 +60,75 @@ void _createComponentFiles(String featureName, String componentName, bool isList
   final className = _capitalize(componentName);
   final snakeCaseName = _convertToSnakeCase(componentName);
 
-  // Data Layer - Model
-  _createFile('lib/features/$featureName/data/models/${snakeCaseName}_model.dart', '''
-class ${className}Model {
+  // Domain Layer - Entity (প্রথমে Entity তৈরি হবে)
+  _createFile('lib/features/$featureName/domain/entities/${snakeCaseName}_entity.dart', '''
+class ${className}Entity {
   final String id;
   final String title;
   final double price;
   final int quantity;
   
-  const ${className}Model({
+  const ${className}Entity({
     required this.id,
     required this.title,
     required this.price,
     required this.quantity,
   });
 
+  // Copy with method for easy updates
+  ${className}Entity copyWith({
+    String? id,
+    String? title,
+    double? price,
+    int? quantity,
+  }) {
+    return ${className}Entity(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      price: price ?? this.price,
+      quantity: quantity ?? this.quantity,
+    );
+  }
+
+  @override
+  String toString() {
+    return '${className}Entity(id: \$id, title: \$title, price: \$price, quantity: \$quantity)';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+  
+    return other is ${className}Entity &&
+      other.id == id &&
+      other.title == title &&
+      other.price == price &&
+      other.quantity == quantity;
+  }
+
+  @override
+  int get hashCode {
+    return id.hashCode ^
+      title.hashCode ^
+      price.hashCode ^
+      quantity.hashCode;
+  }
+}
+''');
+
+  // Data Layer - Model (Entity কে extends করে)
+  _createFile('lib/features/$featureName/data/models/${snakeCaseName}_model.dart', '''
+import '../../domain/entities/${snakeCaseName}_entity.dart';
+
+class ${className}Model extends ${className}Entity {
+  ${className}Model({
+    required super.id,
+    required super.title,
+    required super.price,
+    required super.quantity,
+  });
+
+  // JSON → Dart object
   factory ${className}Model.fromJson(Map<String, dynamic> json) {
     return ${className}Model(
       id: json['id']?.toString() ?? '',
@@ -82,6 +138,7 @@ class ${className}Model {
     );
   }
 
+  // Model → JSON
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -90,11 +147,50 @@ class ${className}Model {
       'quantity': quantity,
     };
   }
+
+  // Entity → Model
+  factory ${className}Model.fromEntity(${className}Entity entity) {
+    return ${className}Model(
+      id: entity.id,
+      title: entity.title,
+      price: entity.price,
+      quantity: entity.quantity,
+    );
+  }
+
+  // Model → Entity (automatically available due to inheritance)
+  ${className}Entity toEntity() {
+    return ${className}Entity(
+      id: id,
+      title: title,
+      price: price,
+      quantity: quantity,
+    );
+  }
+
+  // Copy with method
+  @override
+  ${className}Model copyWith({
+    String? id,
+    String? title,
+    double? price,
+    int? quantity,
+  }) {
+    return ${className}Model(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      price: price ?? this.price,
+      quantity: quantity ?? this.quantity,
+    );
+  }
 }
 ''');
 
   // Data Layer - Remote Data Source
   final responseType = isList ? 'List<${className}Model>' : '${className}Model';
+  final apiResponse = isList
+      ? '[${className}Model(id: "1", title: "$componentName Item 1", price: 29.99, quantity: 2), ${className}Model(id: "2", title: "$componentName Item 2", price: 39.99, quantity: 1)]'
+      : '${className}Model(id: "1", title: "$componentName Item", price: 29.99, quantity: 1)';
 
   _createFile('lib/features/$featureName/data/datasources/${snakeCaseName}_remote_data_source.dart', '''
 import '../../../../core/errors/exceptions.dart';
@@ -110,9 +206,7 @@ class ${className}RemoteDataSourceImpl implements ${className}RemoteDataSource {
     try {
       // Implement your API call here
       await Future.delayed(const Duration(milliseconds: 500));
-      
-      // Example API response
-      ${isList ? 'return [${className}Model(id: "1", title: "$componentName Item 1", price: 29.99, quantity: 2)];' : 'return ${className}Model(id: "1", title: "$componentName Item", price: 29.99, quantity: 1);'}
+      return $apiResponse;
     } catch (e) {
       throw ServerException('Failed to fetch $componentName data');
     }
@@ -126,13 +220,8 @@ class ${className}RemoteDataSourceImpl implements ${className}RemoteDataSource {
     if (await networkInfo.isConnected) {
       try {
         final models = await remoteDataSource.get${className}Data();
-        final entities = models.map((model) => ${className}Entity(
-          id: model.id,
-          title: model.title,
-          price: model.price,
-          quantity: model.quantity,
-        )).toList();
-        return Right(entities);
+        // Models automatically are Entities (due to inheritance)
+        return Right(models);
       } on ServerException catch (e) {
         return Left(ServerFailure(e.message));
       }
@@ -143,13 +232,8 @@ class ${className}RemoteDataSourceImpl implements ${className}RemoteDataSource {
     if (await networkInfo.isConnected) {
       try {
         final model = await remoteDataSource.get${className}Data();
-        final entity = ${className}Entity(
-          id: model.id,
-          title: model.title,
-          price: model.price,
-          quantity: model.quantity,
-        );
-        return Right(entity);
+        // Model automatically is Entity (due to inheritance)
+        return Right(model);
       } on ServerException catch (e) {
         return Left(ServerFailure(e.message));
       }
@@ -183,23 +267,6 @@ class ${className}RepositoryImpl implements ${className}Repository {
 }
 ''');
 
-  // Domain Layer - Entity
-  _createFile('lib/features/$featureName/domain/entities/${snakeCaseName}_entity.dart', '''
-class ${className}Entity {
-  final String id;
-  final String title;
-  final double price;
-  final int quantity;
-  
-  const ${className}Entity({
-    required this.id,
-    required this.title,
-    required this.price,
-    required this.quantity,
-  });
-}
-''');
-
   // Domain Layer - Repository Interface
   _createFile('lib/features/$featureName/domain/repositories/${snakeCaseName}_repository.dart', '''
 import 'package:dartz/dartz.dart';
@@ -229,18 +296,14 @@ class Get${className}UseCase {
 }
 ''');
 
-  // Presentation Layer - Provider
+  // Presentation Layer - State
   final stateType = isList ? 'List<${className}Entity>' : '${className}Entity';
-  final stateClass = isList ? '${className}List' : className;
   final stateLoaded = isList ? '${className}ListLoaded' : '${className}Loaded';
 
-  _createFile('lib/features/$featureName/presentation/providers/${snakeCaseName}_provider.dart', '''
+  _createFile('lib/features/$featureName/presentation/state/${snakeCaseName}_state.dart', '''
 import 'package:flutter/material.dart';
-import 'package:dartz/dartz.dart';
-import '../../domain/usecases/get_${snakeCaseName}_usecase.dart';
 import '../../domain/entities/${snakeCaseName}_entity.dart';
 
-// State Classes
 @immutable
 abstract class ${className}State {
   const ${className}State();
@@ -252,22 +315,34 @@ class ${className}Loading extends ${className}State {}
 
 class ${stateLoaded} extends ${className}State {
   final $stateType data;
+
   const ${stateLoaded}(this.data);
 }
 
 class ${className}Error extends ${className}State {
   final String message;
+
   const ${className}Error(this.message);
 }
+''');
 
-// Provider
+  // Presentation Layer - Provider
+  _createFile('lib/features/$featureName/presentation/providers/${snakeCaseName}_provider.dart', '''
+import 'package:flutter/material.dart';
+import 'package:dartz/dartz.dart';
+import '../../domain/usecases/get_${snakeCaseName}_usecase.dart';
+import '../../domain/entities/${snakeCaseName}_entity.dart';
+import '../state/${snakeCaseName}_state.dart';
+
 class ${className}Provider with ChangeNotifier {
   final Get${className}UseCase get${className}UseCase;
   ${className}State _state = ${className}Initial();
+  ${isList ? 'List<${className}Entity> _items = [];' : '${className}Entity? _item;'}
 
   ${className}Provider({required this.get${className}UseCase});
 
   ${className}State get state => _state;
+  ${isList ? 'List<${className}Entity> get items => _items;' : '${className}Entity? get item => _item;'}
 
   Future<void> get${className}Data() async {
     _state = ${className}Loading();
@@ -280,6 +355,7 @@ class ${className}Provider with ChangeNotifier {
         _state = ${className}Error(failure.toString());
       },
       (${isList ? 'entities' : 'entity'}) {
+        ${isList ? '_items = entities;' : '_item = entity;'}
         _state = ${stateLoaded}(${isList ? 'entities' : 'entity'});
       },
     );
@@ -287,21 +363,57 @@ class ${className}Provider with ChangeNotifier {
     notifyListeners();
   }
 
-  // Add more methods for $componentName operations
-  void addTo${className}(${className}Entity item) {
-    // Implement add logic here
+  ${isList ? '''
+  // Additional methods for list operations
+  void addItem(${className}Entity item) {
+    _items.add(item);
+    _state = ${className}ListLoaded(_items);
     notifyListeners();
   }
 
-  void removeFrom${className}(String itemId) {
-    // Implement remove logic here
+  void removeItem(String itemId) {
+    _items.removeWhere((item) => item.id == itemId);
+    _state = ${className}ListLoaded(_items);
     notifyListeners();
   }
 
-  void update${className}Quantity(String itemId, int newQuantity) {
-    // Implement update logic here
+  void updateItemQuantity(String itemId, int newQuantity) {
+    final index = _items.indexWhere((item) => item.id == itemId);
+    if (index != -1) {
+      final updatedItem = _items[index].copyWith(quantity: newQuantity);
+      _items[index] = updatedItem;
+      _state = ${className}ListLoaded(_items);
+      notifyListeners();
+    }
+  }
+
+  void clearItems() {
+    _items.clear();
+    _state = ${className}ListLoaded(_items);
     notifyListeners();
   }
+  ''' : '''
+  // Additional methods for single item operations
+  void updateItem(${className}Entity updatedItem) {
+    _item = updatedItem;
+    _state = ${className}Loaded(updatedItem);
+    notifyListeners();
+  }
+
+  void updateQuantity(int newQuantity) {
+    if (_item != null) {
+      _item = _item!.copyWith(quantity: newQuantity);
+      _state = ${className}Loaded(_item!);
+      notifyListeners();
+    }
+  }
+
+  void clearItem() {
+    _item = null;
+    _state = ${className}Initial();
+    notifyListeners();
+  }
+  '''}
 }
 ''');
 
@@ -311,7 +423,9 @@ class ${className}Provider with ChangeNotifier {
 String _convertToSnakeCase(String text) {
   return text.replaceAllMapped(
     RegExp(r'[A-Z]'),
-        (match) => match.start == 0 ? match.group(0)!.toLowerCase() : '_${match.group(0)!.toLowerCase()}',
+        (match) => match.start == 0
+        ? match.group(0)!.toLowerCase()
+        : '_${match.group(0)!.toLowerCase()}',
   );
 }
 
